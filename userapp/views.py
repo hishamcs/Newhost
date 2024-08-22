@@ -4,7 +4,6 @@ from product.models import Product,ProductVariation,Brand
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from orders.models import Order,OrderProduct
-from .verify import send,check
 from account.forms import RegistraionForm,AddressForm,UserProfileForm,UserForm
 from account.models import Account,UserAddress,UserProfileImage,Wallet
 from cart.models import Cart,CartItem
@@ -15,6 +14,8 @@ import random
 import requests
 from django.http import HttpResponse
 from django.views.decorators.cache import never_cache
+from django.core.mail import send_mail
+from django.core.cache import cache
 
 # Create your views here.
 def index(request):
@@ -104,6 +105,37 @@ def user_login(request):
             messages.error(request,'Invalid login credentials')
     return render(request,'login.html')
 
+def send_mail_user(to_mail, otp):
+    subject = 'Your OTP from dolofitness.shop'
+    message = f'Hello\n\n Your One-Time-Password is : {otp}\nPlease do not share this OTP.\nThank you!'
+    send_mail(
+        subject,
+        message,
+        'no-reply@example.com',
+        [to_mail],
+        fail_silently=False
+    )
+
+def otp_generate(to_mail):
+    email = to_mail
+    otp = random.randint(100000, 999999)
+    send_mail_user(email, otp)
+    cache.set(f'otp_{email}', otp, timeout=300)
+
+def otp_verify(email, otp):
+    if not email or not otp:
+        return False
+    
+    try:
+        otp = int(otp)
+    except ValueError:
+        return False
+    
+    cache_otp = cache.get(f'otp_{email}')
+    if cache_otp and cache_otp == otp:
+        return True
+    return False
+
 
 def user_signup(request):
     if request.user.is_authenticated:
@@ -113,25 +145,26 @@ def user_signup(request):
     if request.method == 'POST':
         form = RegistraionForm(request.POST)
         if form.is_valid():
-            phone_number_with_country_code       = '+91'+form.cleaned_data['phone_number']
+            # phone_number_with_country_code       = '+91'+form.cleaned_data['phone_number']
             request.session['phone_number'] = form.cleaned_data['phone_number']
             request.session['username']    = form.cleaned_data['username']
             request.session['email']       = form.cleaned_data['email']
             request.session['password']    = make_password(form.cleaned_data['password'])
             request.session['session']     = 'otp_verification'
-            request.session.set_expiry(90)
-            send(phone_number_with_country_code)
-            messages.success(request,'An OTP is sent to the Phone Number')
+            request.session.set_expiry(180)
+            # send(phone_number_with_country_code)
+            otp_generate(form.cleaned_data['email'])
+            # messages.success(request,'An OTP is sent to the Phone Number')
+            messages.success(request,'An OTP is sent to your email')
             return redirect('user_signup_otp')
         else:
             messages.error(request,'Form is not valid, please fill the form correctly')
-            form=RegistraionForm()
+            # form=RegistraionForm()
             return render(request,'signup.html',{'form':form})
 
     else:
         form=RegistraionForm()
     return render(request,'signup.html',{'form':form})
-
 
 def user_signup_otp(request):
     if request.user.is_authenticated:
@@ -140,10 +173,8 @@ def user_signup_otp(request):
         
         if request.method == 'POST':
             otp_code = request.POST['otp']
-            print('otp : ',otp_code)
-            print('phone : ',request.session['phone_number'])
-            phone_number_with_country_code = '+91'+request.session['phone_number']
-            if check(phone_number_with_country_code,otp_code):
+            email = email = request.session['email']
+            if otp_verify(email, otp_code):
                 username = request.session['username']
                 password = request.session['password']
                 phone_number = request.session['phone_number']
@@ -151,7 +182,6 @@ def user_signup_otp(request):
                 user = Account.objects.create_user(email=email,username=username,phone_number=phone_number)
                 user.password=password
                 user.save()
-                print('user : ',user)
                 userprofile = UserProfileImage.objects.create(user=user)
                 userprofile.save()
                 wallet = Wallet.objects.create(user=user)
@@ -167,37 +197,37 @@ def user_signup_otp(request):
     return redirect('user_signup')
 
 
+
+
 def user_logout(request):
     logout(request)
     return redirect('index')
+
+
+
 
 
 def user_login_otp(request):
     if request.user.is_authenticated:
         return redirect('index')
     if request.method == 'POST':
-        phone_number = request.POST['phone_number']
-        # if not re.match(r'^[0-9]+$',phone_number):
-        #     messages.error(request,'Phone number should contain only digits')
-        # if len(phone_number)<10:
-        #     messages.error(request,'Please provide a valid Phone number')
-        if Account.objects.all().filter(phone_number=phone_number):
-            phone_number_with_country_code='+91'+phone_number
-            send(phone_number_with_country_code)
-            return redirect(user_login_otp_verify,phone_number)
+        email = request.POST['email']
+        if Account.objects.all().filter(email=email):
+            otp_generate(email)
+            return redirect(user_login_otp_verify,email)
         else:
-            messages.error(request,'Phone number is not registered with us')
+            messages.error(request,'Sorry, email is not registered with us')
     return render(request,'login_otp.html')
 
 
-def user_login_otp_verify(request,phone_number):
+
+def user_login_otp_verify(request,email):
     if request.user.is_authenticated:
         return redirect('index')
     if request.method == 'POST':
         otp_code = request.POST['otp']
-        phone_number_with_country_code = '+91'+phone_number
-        if check(phone_number_with_country_code,otp_code):
-            user = Account.objects.all().get(phone_number=phone_number)
+        if otp_verify(email, otp_code):
+            user = Account.objects.get(email=email)
             if user.is_blocked:
                 messages.warning(request,'You are Blocked by admin.please contact for further info')
                 return redirect('user_login_otp')
@@ -207,7 +237,6 @@ def user_login_otp_verify(request,phone_number):
             messages.error(request,'Incorrect OTP')
 
     return render(request,'login_otp_verify.html')
-
 
 @login_required(login_url='user_login')
 def dashboard(request):
@@ -444,50 +473,49 @@ def my_address(request):
     }
     return render(request,'my_address.html',context)
 
+
 @never_cache
 def forgotpassword(request):
     if request.method == 'POST':
-        phone_number = request.POST.get('phone_number')
+        email = request.POST.get('email')
         try:
-            user = Account.objects.get(phone_number=phone_number)
-            phnum_with_cntry_code = '+91' + phone_number
-            send(phnum_with_cntry_code)
+            user = Account.objects.get(email=email)
+            otp_generate(email)
             return JsonResponse({'status':'success', 'message':'OTP send successfully'})
         except Account.DoesNotExist:
-            return JsonResponse({'status':'error', 'message':'user is not found...'})
+            return JsonResponse({'status':'error', 'message':'user is not Found...'})
     
     return render(request, 'forgotpassword.html')
+
 
 @never_cache
 def verify_otp_password(request):
     otp = request.POST.get('otp')
-    phone = request.POST.get('phone_number')
-    if phone is None:
+    email = request.POST.get('email')
+    if email is None:
         return redirect('forgotpassword')
-    phnum_with_cntry_code = '+91' + phone
-    print('phone : ', phone)
-    print('otp : ', otp)
-    if check(phnum_with_cntry_code, otp):
-        return render(request,'forgotpass-reset.html',{'phone':phone})
+
+    if otp_verify(email, otp):
+        return render(request,'forgotpass-reset.html',{'email':email})
     elif otp is None:
         return redirect('forgotpassword')
     else:
         messages.error(request, 'The entered OTP is invalid')
         return redirect('forgotpassword')
+    
 
 @never_cache
 def reset_passw_forget(request):
     if request.method == 'POST':
         passw = request.POST.get('new_password')
-        phone_num = request.POST.get('phone_num')
-        user = Account.objects.get(phone_number=phone_num)
+        email = request.POST.get('email')
+        user = Account.objects.get(email=email)
         user.set_password(passw)
         user.save()
         messages.success(request, 'Password Reseted Successfully...')
         return redirect('user_login')
     else:
         return redirect('forgotpassword')
-    
 
 
 def error_404(request, exception):

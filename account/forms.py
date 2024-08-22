@@ -18,9 +18,10 @@ class RegistraionForm(forms.ModelForm):
 
     def clean(self):
         cleaned_data = super(RegistraionForm,self).clean()
-        password = cleaned_data.get('password')
-        confirm_password = cleaned_data.get('confirm_password')
+        password = cleaned_data.get('password', '').strip()
+        confirm_password = cleaned_data.get('confirm_password', '').strip()
         error_msg_password = []
+
         if password != confirm_password:
             error_msg_password.append('Passwords do not match')
         if len(password) < 8:

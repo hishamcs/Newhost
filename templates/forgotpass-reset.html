@@ -29,7 +29,7 @@
                                             <div class="col-md-10">
                                                 <form action="{% url 'reset_passw_forget' %}" method="POST" onsubmit='return validatePasswordReset()'>
                                                     {% csrf_token %}
-                                                    <input type='hidden' name='phone_num' class='form-control' value="{{phone}}">
+                                                    <input type='hidden' name='email' class='form-control' value="{{email}}">
                                                     <div class="form-group">
                                                         <label>Create New Password</label>
                                                         <input type='password' name='new_password' placeholder='Create New Password' class='form-control' required>
